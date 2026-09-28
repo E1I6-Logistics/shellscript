@@ -1,10 +1,20 @@
 #!/usr/bin/env bash
 
-alias sl="source ~/logitle_ws/install/setup.bash"
-alias st="source ~/turtlebot3_ws/install/setup.bash"
+# 환경 변수 설정
+export LOGITLE_MAP="$HOME/logitle_ws/src/turtlebot3/turtlebot3_navigation2/map/logitle_map_fin.yaml"
+export LOGITLE_MASK="$HOME/logitle_ws/src/turtlebot3/turtlebot3_navigation2/map/logitle_map_fin_keepout.yaml"
+
+# 워크스페이스 소싱 alias (실행 성공 시 메시지 출력)
+alias sl='source ~/logitle_ws/install/setup.bash && echo "[OK] logitle_ws sourced"'
+alias st='source ~/turtlebot3_ws/install/setup.bash && echo "[OK] turtlebot3_ws sourced"'
+
+# 실행 명령 alias
+alias loginav2='ros2 launch turtlebot3_navigation2 navigation2_robot.launch.py map:="${LOGITLE_MAP}" mask:="${LOGITLE_MASK}"'
+alias logibring='ros2 launch turtlebot3_bringup robot.launch.py'
+alias logidock='ros2 run logitle_docking precision_docking_ICP_align_server_V2.py'
 
 source /opt/ros/jazzy/setup.bash
-export LDS_MODEL=LDS-02
+export LDS_MODEL=LDS-01
 export TURTLEBOT3_MODEL=burger
 export OPENCR_MODEL=burger
 export OPENCR_PORT=/dev/ttyACM0
