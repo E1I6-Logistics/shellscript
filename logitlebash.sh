@@ -20,7 +20,26 @@ source /opt/ros/jazzy/setup.bash
 export TURTLEBOT3_MODEL=burger
 export OPENCR_MODEL=burger
 export OPENCR_PORT=/dev/ttyACM0
-alias roskill='pkill -9 -f ros2; pkill -9 -f zenoh; pkill -9 -f robot_agent.py; echo "✅ ROS 2 및 통신 프로세스 강제 종료 완료"'
+roskill() {
+    pkill -9 -f "ros2" 2>/dev/null
+    pkill -9 -f "zenoh" 2>/dev/null
+    pkill -9 -f "robot_agent.py" 2>/dev/null
+    pkill -9 -f "nav2" 2>/dev/null
+    pkill -9 -f "controller_server" 2>/dev/null
+    pkill -9 -f "planner_server" 2>/dev/null
+    pkill -9 -f "bt_navigator" 2>/dev/null
+    pkill -9 -f "waypoint_follower" 2>/dev/null
+    pkill -9 -f "lifecycle_manager" 2>/dev/null
+    pkill -9 -f "map_server" 2>/dev/null
+    pkill -9 -f "amcl" 2>/dev/null
+    pkill -9 -f "precision_dock" 2>/dev/null
+    pkill -9 -f "ekf_node" 2>/dev/null
+    pkill -9 -f "ld08_driver" 2>/dev/null
+    pkill -9 -f "turtlebot3_ros" 2>/dev/null
+    pkill -9 -f "robot_state_publisher" 2>/dev/null
+
+    echo "ROS2 / Nav2 / Zenoh processes killed"
+}
 
 # ============================================================
 # Default mode: NORMAL
