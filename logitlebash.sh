@@ -10,11 +10,13 @@ alias st='source ~/turtlebot3_ws/install/setup.bash && echo "[OK] turtlebot3_ws 
 
 # 실행 명령 alias
 alias loginav2='ros2 launch turtlebot3_navigation2 navigation2_robot.launch.py map:="${LOGITLE_MAP}" mask:="${LOGITLE_MASK}"'
-alias logibring='ros2 launch turtlebot3_bringup robot.launch.py'
+alias turtlebring='ros2 launch turtlebot3_bringup robot.launch.py'
 alias logidock='ros2 run logitle_docking precision_docking_ICP_align_server_V2.py'
+alias logibring='ros2 launch logitle_bringup logitle_robot.launch.py'
+alias logizenho='ros2 launch zenoh_pkg zenoh.launch.py robot_id:=robot3 router_ip:=192.168.0.100'
 
 source /opt/ros/jazzy/setup.bash
-export LDS_MODEL=LDS-01
+
 export TURTLEBOT3_MODEL=burger
 export OPENCR_MODEL=burger
 export OPENCR_PORT=/dev/ttyACM0
