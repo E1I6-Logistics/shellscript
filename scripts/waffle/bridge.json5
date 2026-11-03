@@ -1,0 +1,28 @@
+{
+  "plugins": {
+    "ros2dds": {
+      "allow": {
+        "publishers": [
+          "^/battery_state$",
+          "^/amcl_pose$",
+          "^/logitle_pose$"
+        ],
+        "subscribers": [],
+        "service_servers": [],
+        "service_clients": [],
+        "action_servers": [
+          "^/pallet_replace$"
+        ],
+        "action_clients": []
+      }
+    }
+  },
+  "scouting": {
+    "multicast": {
+      "enabled": false
+    },
+    "gossip": {
+      "enabled": false
+    }
+  }
+}

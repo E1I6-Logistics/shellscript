@@ -37,11 +37,14 @@ echo "[4/5] Hold Zenoh bridge"
 sudo apt-mark hold zenoh-bridge-ros2dds
 
 echo "[5/5] Verify"
+set +u
 source /opt/ros/jazzy/setup.bash
+set -u
 ros2 pkg prefix rmw_cyclonedds_cpp
 ros2 pkg prefix rmw_fastrtps_cpp
 zenoh-bridge-ros2dds --version
 
 echo
 echo "Robot installation complete."
-echo "Next: copy/review bashrc_robot.conf in ~/.bashrc, then source ~/.bashrc"
+bash "$SCRIPT_DIR/configure_shell.sh"
+echo "Next: source ~/.bashrc (waffle -> robot4, Domain 11 / Zenoh Domain 0)"

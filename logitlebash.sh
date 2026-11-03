@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
-# Common ROS2 Jazzy / TurtleBot3 Burger environment for turtlebot1~3.
+# TurtleBot1~3 공통 환경 + hostname=waffle의 WAF 추가 프로필.
+# 기존 ~/.bashrc의 동명 alias가 함수 선언을 깨뜨리지 않게 한다.
+unalias ros_local ros_normal roskill robot_info logizenoh 2>/dev/null || true
 export LOGITLE_MAP="$HOME/logitle_ws/src/turtlebot3/turtlebot3_navigation2/map/logitle_map_fin.yaml"
 export LOGITLE_MASK="$HOME/logitle_ws/src/turtlebot3/turtlebot3_navigation2/map/logitle_map_fin_keepout.yaml"
 
@@ -20,6 +22,10 @@ esac
 
 # Preserve original logizenoh command and router IP; only robot_id is dynamic.
 logizenoh() {
+    if [ "${ROBOT_ID:-}" = robot4 ]; then
+        waf_zenoh "$@"
+        return $?
+    fi
     if [ -z "$ROBOT_ID" ]; then
         echo "[ERROR] Unknown hostname: $(hostname)"
         return 1
@@ -99,6 +105,7 @@ ros_normal() {
         turtlebot1) export ROS_DOMAIN_ID=30 ;;
         turtlebot2) export ROS_DOMAIN_ID=31 ;;
         turtlebot3) export ROS_DOMAIN_ID=32 ;;
+        waffle) export ROS_DOMAIN_ID=11 ;;
         *) echo "❌ Unknown hostname: $(hostname)"; return 1 ;;
     esac
     export ROS_AUTOMATIC_DISCOVERY_RANGE=SUBNET
@@ -156,6 +163,9 @@ robot_info() {
     echo '================================='
     echo "HOSTNAME        : $(hostname)"
     echo "IP ADDRESS      : $(hostname -I | awk '{print $1}')"
+    echo "ROBOT_ID        : ${ROBOT_ID:-NOT SET}"
+    echo "ROBOT MODEL     : ${TURTLEBOT3_MODEL:-NOT SET}"
+    echo "LDS MODEL       : ${LDS_MODEL:-NOT SET}"
     echo "ROS_DISTRO      : ${ROS_DISTRO:-NOT SET}"
     echo "ROS_DOMAIN_ID   : ${ROS_DOMAIN_ID:-0}"
     echo "RMW             : ${RMW_IMPLEMENTATION:-DEFAULT}"
@@ -174,3 +184,8 @@ robot_info() {
     fi
     echo '================================='
 }
+
+# Waffle 설정은 마지막에 적용해 예전 Burger 모델·Domain을 덮어쓴다.
+if [ "$(hostname)" = waffle ]; then
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/waffle/environment.sh"
+fi
