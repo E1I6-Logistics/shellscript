@@ -13,19 +13,30 @@ configure = importlib.util.module_from_spec(spec);spec.loader.exec_module(config
 
 
 class RobotEnvironmentTests(unittest.TestCase):
-    def shell(self, host, body, template=False):
+    def shell(self, host, body, template=False, user='tester', role=None):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             workspace = tmp/'waffle ws';(workspace/'install').mkdir(parents=True)
             (workspace/'install/setup.bash').write_text('# fake workspace\n')
+            (workspace/'src').mkdir();(workspace/'config').mkdir();(workspace/'map').mkdir()
+            (workspace/'src/pallet_replace_server.py').write_text('# fake server\n')
+            (workspace/'scripts').mkdir();(workspace/'scripts/waffle_camera_manager.py').write_text('# fake camera\n')
+            for name in ('logitle_map_fin.yaml','logitle_map_fin_keepout.yaml'):
+                (workspace/'map'/name).write_text('fake map\n')
+            (workspace/'config/waffle_real_nav.yaml').write_text('fake config\n')
+            python=tmp/'fake python'
+            python.write_text('#!/bin/sh\nprintf "PYTHON %s\\n" "$*" >> "$CAPTURE"\n')
+            python.chmod(0o755)
             capture = tmp/'calls'
             script = r'''set -e
 hostname() { if [ "${1:-}" = -I ]; then echo 127.0.0.1; else echo "$TEST_HOST"; fi; }
+id() { if [ "${1:-}" = -un ]; then echo "$TEST_USER"; else command id "$@"; fi; }
 source() {
     if [[ "$1" = /opt/ros/* || "$1" = "$WAF_WS/install/setup.bash" || "$1" = ~/turtlebot3_ws/install/setup.bash ]]; then return 0; fi
     builtin source "$@"
 }
 ros2() { printf 'ROS %s\n' "$*" >> "$CAPTURE"; }
+python3() { printf 'CAMERA %s\n' "$*" >> "$CAPTURE"; }
 zenoh-bridge-ros2dds() { printf 'BRIDGE %s\n' "$*" >> "$CAPTURE"; }
 shopt -s expand_aliases
 alias ros_local='echo OLD_LOCAL'
@@ -34,7 +45,9 @@ alias roskill='echo OLD_KILL'
 builtin source "$PROFILE"
 '''+body
             env = __import__('os').environ.copy()
-            env.update(TEST_HOST=host,WAF_WS=str(workspace),CAPTURE=str(capture),
+            env.pop('WAF_ROLE',None)
+            if role:env['WAF_ROLE']=role
+            env.update(TEST_HOST=host,TEST_USER=user,WAF_WS=str(workspace),WAF_CAMERA_WS=str(workspace),WAF_PYTHON=str(python),CAPTURE=str(capture),
                        PROFILE=str(ROOT/('scripts/robot/bashrc_robot.conf' if template else 'logitlebash.sh')))
             result = subprocess.run(['bash','--noprofile','--norc','-c',script],env=env,text=True,capture_output=True)
             self.assertEqual(result.returncode,0,result.stdout+result.stderr)
@@ -44,22 +57,63 @@ builtin source "$PROFILE"
         self.shell('waffle', r'''
 [[ "$ROBOT_ID" = robot4 && "$ROBOT_DOMAIN_ID" = 11 && "$ROS_DOMAIN_ID" = 11 ]]
 [[ "$LDS_MODEL" = LDS-03 && "$TURTLEBOT3_MODEL" = waffle && "$OPENCR_MODEL" = waffle && "$OPENCR_PORT" = /dev/ttyACM0 ]]
-[[ "$RMW_IMPLEMENTATION" = rmw_fastrtps_cpp && "$ROS_AUTOMATIC_DISCOVERY_RANGE" = SUBNET ]]
+[[ "$RMW_IMPLEMENTATION" = rmw_cyclonedds_cpp && "$ROS_AUTOMATIC_DISCOVERY_RANGE" = SUBNET ]]
 robot_info
 ''')
 
-    def test_waffle_local_bridge_and_return_to_domain_11(self):
+    def test_pi_keeps_domain_11_and_refuses_bridge(self):
         stdout,calls=self.shell('waffle',r'''
 if logizenoh; then exit 20; fi
 ros_local
-[[ "$ROS_DOMAIN_ID" = 0 && "$RMW_IMPLEMENTATION" = rmw_cyclonedds_cpp && "$ROS_AUTOMATIC_DISCOVERY_RANGE" = LOCALHOST ]]
-logizenoh 192.168.0.16
+[[ "$ROS_DOMAIN_ID" = 11 && "$RMW_IMPLEMENTATION" = rmw_cyclonedds_cpp && "$ROS_AUTOMATIC_DISCOVERY_RANGE" = SUBNET ]]
+if logizenoh 192.168.0.16; then exit 21; fi
 ros_normal
-[[ "$ROS_DOMAIN_ID" = 11 && "$RMW_IMPLEMENTATION" = rmw_fastrtps_cpp && "$ROS_AUTOMATIC_DISCOVERY_RANGE" = SUBNET ]]
+[[ "$ROS_DOMAIN_ID" = 11 && "$RMW_IMPLEMENTATION" = rmw_cyclonedds_cpp && "$ROS_AUTOMATIC_DISCOVERY_RANGE" = SUBNET ]]
 ''')
+        self.assertNotIn('BRIDGE ',calls)
+
+    def test_ax_username_and_explicit_role_work_without_hostname_change(self):
+        for user,role in (('ax_logistics',None),('another_account','jetson')):
+            with self.subTest(user=user):
+                self.shell('localhost.localdomain',r'''
+builtin source "$PROFILE"
+[[ "$WAF_ROLE" = jetson && "$ROBOT_ID" = robot4 && "$ROS_DOMAIN_ID" = 11 ]]
+[[ "$RMW_IMPLEMENTATION" = rmw_cyclonedds_cpp && "$ROS_AUTOMATIC_DISCOVERY_RANGE" = SUBNET ]]
+[[ -z "${ROS_LOCALHOST_ONLY:-}" ]]
+''',user=user,role=role)
+
+    def test_jetson_bridge_uses_domain_11_subnet_and_existing_config(self):
+        _,calls=self.shell('localhost.localdomain',r'''
+export ROS_DOMAIN_ID=0 ROS_LOCALHOST_ONLY=1
+if logizenoh; then exit 20; fi
+ros_local
+[[ "$ROS_DOMAIN_ID" = 11 && -z "${ROS_LOCALHOST_ONLY:-}" ]]
+logizenoh 192.168.0.16
+''',user='ax_logistics')
         self.assertEqual(calls.count('BRIDGE '),1)
-        for text in ('-d 0','-n /robot4','tcp/192.168.0.16:7447','scripts/waffle/bridge.json5'):
+        for text in ('-d 11','-n /robot4','--ros-automatic-discovery-range SUBNET','tcp/192.168.0.16:7447','scripts/waffle/bridge.json5'):
             self.assertIn(text,calls)
+
+    def test_user_launch_commands_and_role_guards(self):
+        _,pi=self.shell('waffle',r'''
+wafbring
+wafcamera
+if wafnav2; then exit 20; fi
+if wafreplace; then exit 21; fi
+''')
+        self.assertIn('launch waffle waffle_bringup.launch.py',pi)
+        self.assertIn('scripts/waffle_camera_manager.py',pi)
+        _,jetson=self.shell('localhost.localdomain',r'''
+export ROS_DOMAIN_ID=0
+wafnav2
+[[ "$ROS_DOMAIN_ID" = 11 ]]
+wafreplace
+if wafbring; then exit 20; fi
+if wafgoal nope; then exit 21; fi
+wafgoal 1
+''',user='ax_logistics')
+        for text in ('turtlebot3_navigation2 navigation2.launch.py','logitle_map_fin.yaml','logitle_map_fin_keepout.yaml','waffle_real_nav.yaml','src/pallet_replace_server.py','action send_goal /pallet_replace waffle_interfaces/action/PalletReplace {destination: 1} --feedback'):
+            self.assertIn(text,jetson)
 
     def test_turtlebot_123_profiles_and_existing_zenoh_launch_are_preserved(self):
         for number,domain in ((1,30),(2,31),(3,32)):
@@ -119,6 +173,16 @@ ros_normal
             with self.assertRaises(ValueError):configure.configure(Path(tmp)/'missing',path)
             self.assertEqual(path.read_bytes(),before)
 
+    def test_explicit_role_is_saved_and_preserved_on_reconfigure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'bashrc';path.write_text('export KEEP_ME=yes\n')
+            configure.configure(ROOT/'logitlebash.sh',path,'jetson')
+            self.assertIn('export WAF_ROLE=jetson',path.read_text())
+            self.assertIsNone(configure.configure(ROOT/'logitlebash.sh',path))
+            configure.configure(ROOT/'logitlebash.sh',path,'pi')
+            self.assertIn('export WAF_ROLE=pi',path.read_text())
+            self.assertNotIn('export WAF_ROLE=jetson',path.read_text())
+
     def test_environment_only_installer_uses_requested_file_without_apt(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'test bashrc';path.write_text('export KEEP_ME=yes\n')
@@ -134,7 +198,7 @@ ros_normal
             original=path.read_bytes()
             with self.assertRaises(ValueError):configure.configure(ROOT/'logitlebash.sh',path)
             self.assertEqual(path.read_bytes(),original)
-        for file in [ROOT/'logitlebash.sh', ROOT/'scripts/robot/bashrc_robot.conf', ROOT/'scripts/robot/install_robot.sh', ROOT/'scripts/robot/configure_shell.sh',ROOT/'scripts/waffle/environment.sh']:
+        for file in [ROOT/'logitlebash.sh', ROOT/'scripts/robot/bashrc_robot.conf', ROOT/'scripts/robot/install_robot.sh', ROOT/'scripts/robot/configure_shell.sh',ROOT/'scripts/waffle/environment.sh',ROOT/'scripts/waffle/detect_role.sh',ROOT/'scripts/waffle/install.sh']:
             self.assertEqual(subprocess.run(['bash','-n',str(file)]).returncode,0,str(file))
 
 

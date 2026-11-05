@@ -2,7 +2,8 @@
 
 # TurtleBot1~3 공통 환경 + hostname=waffle의 WAF 추가 프로필.
 # 기존 ~/.bashrc의 동명 alias가 함수 선언을 깨뜨리지 않게 한다.
-unalias ros_local ros_normal roskill robot_info logizenoh 2>/dev/null || true
+unalias ros_local ros_normal roskill robot_info logizenoh logicam 2>/dev/null || true
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/waffle/detect_role.sh"
 export LOGITLE_MAP="$HOME/logitle_ws/src/turtlebot3/turtlebot3_navigation2/map/logitle_map_fin.yaml"
 export LOGITLE_MASK="$HOME/logitle_ws/src/turtlebot3/turtlebot3_navigation2/map/logitle_map_fin_keepout.yaml"
 
@@ -164,6 +165,7 @@ robot_info() {
     echo "HOSTNAME        : $(hostname)"
     echo "IP ADDRESS      : $(hostname -I | awk '{print $1}')"
     echo "ROBOT_ID        : ${ROBOT_ID:-NOT SET}"
+    echo "WAF_ROLE        : ${WAF_ROLE:-NOT SET}"
     echo "ROBOT MODEL     : ${TURTLEBOT3_MODEL:-NOT SET}"
     echo "LDS MODEL       : ${LDS_MODEL:-NOT SET}"
     echo "ROS_DISTRO      : ${ROS_DISTRO:-NOT SET}"
@@ -186,6 +188,6 @@ robot_info() {
 }
 
 # Waffle 설정은 마지막에 적용해 예전 Burger 모델·Domain을 덮어쓴다.
-if [ "$(hostname)" = waffle ]; then
+if [ "${WAF_ROLE:-}" = pi ] || [ "${WAF_ROLE:-}" = jetson ]; then
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/waffle/environment.sh"
 fi

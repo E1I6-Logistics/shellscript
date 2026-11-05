@@ -1,5 +1,6 @@
 """기존 .bashrc를 보존하며 저장소 경로를 끝에 한 번만 등록한다."""
 import argparse
+import re
 from pathlib import Path
 import shlex
 import shutil
@@ -9,10 +10,12 @@ BEGIN = "# >>> LOGITLE ROBOT ENV >>>"
 END = "# <<< LOGITLE ROBOT ENV <<<"
 
 
-def configure(source, bashrc):
+def configure(source, bashrc, role=None):
     source, bashrc = Path(source).resolve(), Path(bashrc).expanduser()
     if not source.is_file():
         raise ValueError("환경 파일 없음: " + str(source))
+    if role not in (None, 'pi', 'jetson'):
+        raise ValueError('WAF 역할은 pi 또는 jetson이어야 합니다')
     original = bashrc.read_text() if bashrc.exists() else ""
     before = original
     if BEGIN in original or END in original:
@@ -21,10 +24,15 @@ def configure(source, bashrc):
         start, end = original.index(BEGIN), original.index(END)
         if end < start:
             raise ValueError(".bashrc 관리 블록 순서가 올바르지 않습니다")
+        if role is None:
+            existing = re.search(r'^export WAF_ROLE=(pi|jetson)$', original[start:end], re.M)
+            if existing:
+                role = existing.group(1)
         before = original[:start] + original[end + len(END):]
     # 항상 마지막에 배치한다. 이전 별칭/모델 값보다 이 설정이 우선한다.
     quoted = shlex.quote(str(source))
-    block = f"{BEGIN}\nif [ -r {quoted} ]; then\n    source {quoted}\nfi\n{END}\n"
+    role_line = f"export WAF_ROLE={role}\n" if role else ""
+    block = f"{BEGIN}\n{role_line}if [ -r {quoted} ]; then\n    source {quoted}\nfi\n{END}\n"
     desired = before.rstrip("\n") + "\n\n" + block
     if desired == original:
         return None
@@ -42,15 +50,16 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", required=True)
     parser.add_argument("--bashrc", default=str(Path.home()/".bashrc"))
+    parser.add_argument("--role", choices=('pi', 'jetson'), help='Waffle Pi 또는 AX Jetson 역할 고정')
     args = parser.parse_args()
     try:
-        backup = configure(args.source, args.bashrc)
+        backup = configure(args.source, args.bashrc, args.role)
     except (OSError, ValueError) as exc:
         parser.exit(1, "[환경 등록 실패] " + str(exc) + "\n")
     if backup:
         print("기존 설정 백업:", backup)
     print("환경 등록 완료:", args.bashrc)
-    print("새 터미널을 열거나 source ~/.bashrc 를 실행하세요. 호스트명 waffle이면 WAF 설정을 적용합니다.")
+    print("새 터미널을 열거나 source ~/.bashrc 실행. WAF: Domain 11 / CycloneDDS / SUBNET")
 
 
 if __name__ == "__main__":

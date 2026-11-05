@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/../waffle/detect_role.sh"
+if [ "${WAF_ROLE:-}" = pi ] || [ "${WAF_ROLE:-}" = jetson ]; then
+    exec bash "$SCRIPT_DIR/../waffle/install.sh" --role "$WAF_ROLE" "$@"
+fi
 
 [[ -f /opt/ros/jazzy/setup.bash ]] || {
     echo "ERROR: ROS 2 Jazzy not found."
