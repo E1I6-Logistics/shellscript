@@ -1,179 +1,115 @@
 # shellscript
 
-Logistics 프로젝트에서 사용하는 **Ubuntu 24.04 / ROS 2 Jazzy / Zenoh 환경 설정 및 실행 보조 스크립트** 모음입니다. 메인 PC(FMS)와 TurtleBot3 로봇의 패키지 설치, ROS 2 통신 모드 전환, 자주 사용하는 실행 명령 및 Wi-Fi 설정을 지원합니다.
+**LOGIFLOW · 메인 PC·AMR·Waffle·AX Jetson의 환경과 실행 명령을 맞추는 공통 스크립트**
 
-## 1. 폴더 구조
+장비마다 다른 ROS 도메인·통신 방식·작업공간을 반복해서 설정하지 않도록 설치기와 셸 명령을 모은 저장소다. AMR 1~3, FMS 메인 PC, WAF의 Pi·Jetson 역할을 구분하고 필요한 통신 패키지와 실행 함수를 준비한다.
+
+주행·로봇팔·비전 알고리즘은 각 장비 저장소에 있다. 이 저장소는 환경 등록, 기존 실행 명령 호출, WAF 서비스 관리와 네트워크 설정을 담당한다.
+
+[개요](#1-프로젝트-개요) · [기능](#2-주요-기능) · [연결](#3-시스템-연결) · [환경](#4-실행-환경) · [구조](#5-저장소-구조) · [설치](#6-설치-및-환경-설정) · [사용](#7-사용-방법) · [운영](#8-설정과-운영-시-참고) · [점검](#9-확인-및-점검) · [문서](#10-관련-문서와-저장소) · [브랜치](#11-브랜치와-문서-기준)
+
+## 1. 프로젝트 개요
+
+여러 장비가 각각 정상이어도 Domain·RMW·namespace·작업공간이 다르면 하나의 시스템으로 연결되지 않는다. 장비의 역할을 정해 같은 방식으로 환경을 불러오고, 현장에서 자주 쓰는 실행·상태·종료 명령을 줄이는 것이 목적이다.
+
+| 장비 | 역할 |
+|---|---|
+| FMS PC | Zenoh Router·Bridge 등 메인 통신 환경 |
+| TurtleBot1~3 | AMR 내부 ROS 환경과 robot1~3 Bridge |
+| Waffle Pi | WAF Bringup·카메라, Domain 11 DDS |
+| AX Jetson | WAF Nav2·비전·액션, robot4 Zenoh 연결 |
+
+## 2. 주요 기능
+
+- **설치 보조:** 기존 ROS 2 Jazzy 장비에 역할별 RMW·Zenoh 패키지 준비.
+- **환경 등록:** `.bashrc` 관리 블록과 백업, 호스트명·계정·명시 역할을 통한 WAF 프로필 선택.
+- **통신 모드:** AMR의 일반 DDS/로컬 Zenoh, WAF의 Domain 11 SUBNET 구성을 구분.
+- **단축 실행:** Bringup·Nav2·카메라·Bridge·팔레트 액션 서버 실행 명령.
+- **WAF 자동 시작:** Pi 2개·Jetson 3개 사용자 systemd 서비스 설치·시작·정지·로그 조회.
+- **운영 점검:** 적용된 ID·역할·도메인·RMW 확인과 로컬 프로세스 정리.
+- **네트워크 보조:** NetworkManager·Netplan 기반 Wi-Fi·고정 IP 설정 도구.
+
+## 3. 시스템 연결
+
+```mermaid
+flowchart LR
+    Profile["shellscript · 역할 / 환경 / 명령"] --> Main["FMS PC · Domain 15"]
+    Profile --> AMR["AMR1~3 · Domain 0 + Zenoh"]
+    Profile --> Pi["Waffle Pi · Domain 11 DDS"]
+    Profile --> AX["AX Jetson · Domain 11 DDS + Zenoh"]
+    Pi <-->|"SUBNET"| AX
+    AMR <-->|"robot1~3"| Main
+    AX <-->|"robot4"| Main
+```
+
+| 장비·모드 | Domain | RMW | Discovery | FMS 연결 |
+|---|---|---|---|---|
+| AMR1~3 `ros_local` | 0 | CycloneDDS | LOCALHOST | 각 로봇의 Zenoh Bridge |
+| AMR1~3 `ros_normal` | 30/31/32 | FastDDS | SUBNET | 일반 DDS 모드 |
+| FMS `ros_local` | 15 | CycloneDDS | LOCALHOST | 메인 Router·Bridge |
+| Waffle Pi·AX Jetson | 11 | CycloneDDS | SUBNET | Jetson에서만 robot4 Bridge |
+
+WAF 프로필에서는 `ros_local`을 실행해도 Domain 11·SUBNET을 유지하고 localhost 제한을 해제한다. Waffle Pi에 Zenoh Bridge를 띄우는 구성이 아니다.
+
+## 4. 실행 환경
+
+| 항목 | 구성 |
+|---|---|
+| 운영체제·셸 | Ubuntu 24.04, Bash |
+| ROS | ROS 2 Jazzy가 먼저 설치된 장비 |
+| 지원 환경 | 메인 PC, aarch64 로봇·Jetson |
+| 통신 패키지 | CycloneDDS·FastDDS, Zenoh ROS2DDS Bridge 1.9.0 |
+| 권한 | 패키지 설치·APT 저장소·linger 등록 시 sudo |
+| 사전 작업공간 | AMR·WAF·카메라 등의 소스·빌드·장비 설정 별도 준비 |
+
+설치기는 모든 로봇 모델·펌웨어·비전 가중치까지 준비하지 않는다. 설치·역할 등록과 로봇 실행을 구분한다.
+
+## 5. 저장소 구조
 
 ```text
 shellscript/
-├── logitlebash.sh                  # TurtleBot3 공통 ROS2 환경 및 실행 함수
-├── scripts/
-│   ├── main/
-│   │   ├── install_main.sh         # 메인 PC용 Zenoh 및 ROS 패키지 설치
-│   │   ├── requirements.txt        # 메인 PC APT 패키지 목록
-│   │   └── bashrc_main.conf       # 메인 PC ROS 통신 환경 설정
-│   ├── robot/
-│   │   ├── install_robot.sh        # 로봇용 Zenoh Bridge 및 ROS 패키지 설치
-│   │   ├── requirements.txt        # 로봇 APT 패키지 목록
-│   │   └── bashrc_robot.conf      # 로봇별 ROS 통신 환경 설정
-│   ├── setup.sh                    # FMS 프로젝트 통합 설치용 스크립트
-│   └── verify_env.sh               # FMS 환경 확인용 스크립트
-├── setup_wifi.sh                   # NetworkManager 기반 Wi-Fi 연결/고정 IP
-├── setup_wifi_static.sh            # Netplan 기반 Wi-Fi 고정 IP 설정
-└── set_wifi_static.sh              # 구형 Netplan 고정 IP 스크립트
+├── logitlebash.sh                 # 장비별 환경과 공통 실행 함수
+├── scripts/main/                  # 메인 PC 통신 패키지·셸 환경
+├── scripts/robot/                 # AMR 설치·환경 등록·백업
+├── scripts/waffle/
+│   ├── detect_role.sh             # Pi / Jetson 역할 판별
+│   ├── environment.sh             # WAF 환경·실행 함수
+│   ├── bridge.json5               # robot4 허용 인터페이스
+│   ├── install.sh                 # 역할별 통신 설치·셸 등록
+│   ├── run_service.sh             # 서비스 실행 진입점
+│   └── service.py                 # WAF 사용자 systemd 관리
+├── scripts/setup.sh               # FMS 구조를 전제로 한 통합 설치 보조
+├── scripts/verify_env.sh           # FMS 환경 확인 보조
+├── setup_wifi.sh                  # NetworkManager 네트워크 설정
+├── setup_wifi_static.sh           # Netplan 고정 IP 설정
+├── set_wifi_static.sh             # 기존 Netplan 도구
+├── tests/                         # 환경·역할·서비스 가상 검증
+└── docs/                          # 상세 운영 참고
 ```
 
-## 2. 준비 환경
+## 6. 설치 및 환경 설정
 
-- Ubuntu 24.04, ROS 2 Jazzy
-- TurtleBot3 Burger: 로봇용 패키지, LDS 드라이버 및 [Logistics_AMR](https://github.com/E1I6-Logistics/Logistics_AMR) 워크스페이스 별도 준비
-- 메인 PC: [Logistics_AI](https://github.com/E1I6-Logistics/Logistics_AI) 별도 준비
-- Zenoh Router는 메인 PC, `zenoh-bridge-ros2dds`는 로봇 측에서 사용
+### 저장소 받기
 
 ```bash
-git clone -b dev https://github.com/E1I6-Logistics/shellscript.git ~/shellscript
+git clone --branch dev https://github.com/E1I6-Logistics/shellscript.git ~/shellscript
 cd ~/shellscript
 ```
 
-## 3. 설치
+기존 장비는 로컬 변경을 확인한 뒤 현재 `dev`를 갱신한다. 아래 역할별 설치 중 해당 장비의 절차를 사용한다.
 
-### 로봇 (TurtleBot3)
-
-**ROS 2 Jazzy가 이미 설치된 로봇**에서 실행합니다. `zenoh-bridge-ros2dds` **1.9.0**과 필요한 RMW 패키지 등을 설치하고 Zenoh 패키지 버전을 고정합니다.
+### AMR1~3
 
 ```bash
 cd ~/shellscript
 bash scripts/robot/install_robot.sh
-```
-
-실행 전에 스크립트 내용을 확인하세요. APT 저장소 등록과 `sudo apt install`, 버전 고정(`apt-mark hold`)이 실행됩니다.
-
-### 메인 PC
-
-**ROS 2 Jazzy가 이미 설치된 Ubuntu 24.04 PC**에서 실행합니다. Zenoh Router와 ROS2DDS Bridge **1.9.0**을 설치합니다.
-
-```bash
-cd ~/shellscript
-bash scripts/main/install_main.sh
-```
-
-`scripts/setup.sh`는 이 `shellscript` 폴더 단독 설치용이 아닙니다. `backend/requirements.txt`, `frontend/`, `start_fms.sh` 등이 **같은 프로젝트 루트**에 있다고 가정하므로, 단독 clone 직후 이 스크립트를 실행하지 마세요. FMS 통합 설치는 FMS 프로젝트 폴더 구조에 맞게 사용해야 합니다.
-
-## 4. 로봇 환경 설정 및 실행
-
-현재 실장비에서 사용하는 공통 스크립트는 `logitlebash.sh`입니다.
-
-```bash
-# 최초 한 번 ~/.bashrc에 등록
-printf '\nsource ~/shellscript/logitlebash.sh\n' >> ~/.bashrc
 source ~/.bashrc
+robot_info
 ```
 
-> 중복 등록하지 않도록 `grep -n 'logitlebash.sh' ~/.bashrc`로 먼저 확인하세요. AMR 프로필은 `~/logitle_ws`, `~/turtlebot3_ws`를 사용합니다. WAF Pi·Jetson 경로는 아래 전용 절차를 참고하세요.
+설치기는 필요한 통신 패키지를 설치하고 공통 환경을 등록한다. AMR 프로필의 작업공간 기본 경로는 `~/logitle_ws`, 보조 TurtleBot 작업공간은 `~/turtlebot3_ws`다. `turtlebot1`~`turtlebot3` 호스트명으로 장비 ID를 선택한다.
 
-주요 명령은 다음과 같습니다.
-
-| 명령 | 역할 |
-| --- | --- |
-| `ros_local` | AMR1~3: Domain 0·LOCALHOST / WAF Pi·Jetson: Domain 11·SUBNET 유지 |
-| `ros_normal` | AMR1~3: Domain 30/31/32·FastDDS / WAF: Domain 11·CycloneDDS·SUBNET |
-| `robot_info` | 로봇 IP, Domain, RMW, Bridge 실행 상태 확인 |
-| `sl` | `~/logitle_ws/install/setup.bash` Source |
-| `st` | `~/turtlebot3_ws/install/setup.bash` Source |
-| `logibring` | 통합 AMR Bringup (Nav2, 도킹, ArUco 포함) |
-| `loginav2` | Nav2 단독 실행 |
-| `turtlebring` | TurtleBot3 기본 Bringup |
-| `logizenoh` | 로봇 이름으로 Zenoh Bridge 실행, 기본 Router IP `192.168.0.16` |
-| `logicam` | 카메라 Launch |
-| `roskill` | 로컬 ROS/Zenoh 관련 프로세스 강제 종료 (**주의**) |
-
-AMR1~3을 FMS와 연결하는 실행 예시 (WAF는 아래 전용 절차 사용, 각각 **별도 터미널**):
-
-```bash
-# Terminal 1: 로봇 구동·Nav2·ArUco·도킹
-ros_local
-sl
-logibring
-```
-
-```bash
-# Terminal 2: Zenoh Bridge
-ros_local
-sl
-logizenoh
-```
-
-`logizenoh`는 `turtlebot1`, `turtlebot2`, `turtlebot3`, `waffle`을 지원합니다. AMR에서는 내부적으로 `ros2 launch zenoh_pkg zenoh.launch.py`를 사용하며, `robot_id`와 Router 주소 `192.168.0.16`이 설정되어 있습니다. Waffle에서는 아래 전용 Bridge 설정을 사용합니다. **메인 PC IP가 다르면 `logitlebash.sh`의 `logizenoh` 부분을 수정하거나 아래처럼 직접 실행**하세요.
-
-```bash
-ros2 launch zenoh_pkg zenoh.launch.py robot_id:=robot3 router_ip:=<메인_PC_IP>
-```
-
-Zenoh Router는 TCP **7447** 포트를 사용합니다. 메인 PC에서 Router가 먼저 구동 중이어야 합니다. AMR1~3은 `ros_local`을 사용합니다. WAF의 Jetson Bridge는 Domain 11·SUBNET을 사용합니다.
-
-### 메인 PC 환경 설정(선택)
-
-`scripts/main/bashrc_main.conf`를 확인한 후 별도 파일로 로드할 수 있습니다.
-
-```bash
-cp ~/shellscript/scripts/main/bashrc_main.conf ~/.axbashrc
-printf '\nsource ~/.axbashrc\n' >> ~/.bashrc
-source ~/.bashrc
-```
-
-메인 PC 설정의 `ros_local`은 로봇과 달리 **Domain 15**를 사용합니다. `main_info`로 현재 IP와 ROS 환경을 확인할 수 있습니다. 이미 `.bashrc`에 설정이 있다면 중복 등록하지 마세요.
-
-## 5. Wi-Fi 설정 스크립트
-
-| 파일 | 용도 |
-| --- | --- |
-| `setup_wifi.sh` | `nmcli`로 SSID 연결, 선택적으로 IPv4 고정 IP 설정 |
-| `setup_wifi_static.sh` | Netplan 파일 백업 후 고정 IP·게이트웨이·DNS 설정 |
-| `set_wifi_static.sh` | 구형 Netplan 스크립트. 네트워크 설정을 덮어쓰므로 사용 비권장 |
-
-NetworkManager(`nmcli`)를 사용하는 장비라면:
-
-```bash
-sudo bash setup_wifi.sh
-```
-
-Netplan으로 고정 IP를 적용할 경우에는 먼저 스크립트에서 사용하는 네트워크 렌더러와 `/etc/netplan/50-cloud-init.yaml` 경로가 실제 시스템과 맞는지 확인하세요.
-
-**주의:** Wi-Fi 변경 과정에서 현재 SSH 연결이 끊길 수 있습니다. 반드시 로컬 콘솔 또는 복구 가능한 접속 수단을 확보한 뒤 적용하세요. `set_wifi_static.sh`에는 기존 Wi-Fi 자격 정보가 포함되어 있으므로 공개 저장소에 보관하지 말고 제거·교체해야 합니다. 이미 노출된 자격 정보는 변경하는 것이 안전합니다.
-
----
-
-
-## Waffle Pi + AX Jetson (robot4)
-
-```text
-Waffle Pi 192.168.0.105                      AX Jetson 192.168.0.100
-bringup · 카메라 매니저  ← DDS Domain 11 →  Nav2 · 비전 · pallet_replace
-CycloneDDS / SUBNET                         CycloneDDS / SUBNET
-Zenoh 설치·실행 없음                         Zenoh Bridge → FMS Router
-                                             외부 네임스페이스 /robot4
-```
-
-**두 장비 모두 Domain 11, CycloneDDS, SUBNET을 유지한다.** `ROS_LOCALHOST_ONLY`는 해제한다.
-WAF 프로필에서는 실수로 `ros_local`을 호출해도 Domain 0·LOCALHOST로 전환하지 않는다.
-AMR1~3의 기존 모드와 FMS 설정은 변경하지 않는다.
-
-### 최초 설치·등록
-
-ROS 2 Jazzy와 기존 WAF·카메라 작업 공간이 설치·빌드된 상태를 전제로 한다.
-이 설치기는 통신 패키지와 셸 명령만 준비한다. 모델·지도·Nav2 파라미터를 수정하거나
-로봇·카메라·액션·Bridge를 자동 실행하지 않는다.
-
-두 장비에 저장소가 없으면 각각:
-
-```bash
-git clone -b dev https://github.com/E1I6-Logistics/shellscript.git ~/shellscript
-```
-
-이미 있으면 `~/shellscript`에서 `git switch dev` 후 `git pull --ff-only origin dev`로 갱신한다.
-작업 중인 변경이 있으면 먼저 보존한다.
-
-Waffle Pi (`waffle@192.168.0.105`):
+### Waffle Pi
 
 ```bash
 cd ~/shellscript
@@ -183,7 +119,7 @@ source ~/.bashrc
 robot_info
 ```
 
-AX Jetson (`ax_logistics@192.168.0.100`):
+### AX Jetson
 
 ```bash
 cd ~/shellscript
@@ -193,126 +129,119 @@ source ~/.bashrc
 robot_info
 ```
 
-Pi는 CycloneDDS만 설치한다. Jetson은 CycloneDDS와 `zenoh-bridge-ros2dds` 1.9.0을 설치한다.
-이미 패키지가 설치되어 있으면 `--env-only`를 추가해 환경 등록만 진행할 수 있다.
-`.bashrc`를 백업하고 관리 블록을 한 번만 등록한다. `--role jetson`은 호스트명이
-`localhost.localdomain`이어도 적용된다. 계정명 `ax_logistics`도 자동 인식한다.
+WAF의 기본 경로는 Pi `~/Logistics_WAF_RASPI`, Jetson `~/Logistics_WAF`, 카메라 `~/camera_ws`, 비전 Python `~/venv/yolov3/bin/python`이다. `unset WAF_WS`는 이전 셸에 남은 공통 작업공간 값을 제거해 역할별 기본 경로를 선택하는 절차다.
 
-### 실행: 각각 별도 터미널
+이미 패키지가 설치되어 있으면 WAF 설치에 `--env-only`를 추가해 환경 등록만 수행할 수 있다. `--role jetson`은 호스트명이 `localhost.localdomain`이어도 적용된다.
 
-SSH에서 `.bashrc`의 비대화형 조기 종료에 영향을 받지 않도록 환경 파일을 직접 읽는다.
-아래 따옴표는 셸용 ASCII 작은따옴표다.
-
-Waffle bringup:
+### 메인 PC
 
 ```bash
-ssh -t waffle@192.168.0.105 'source ~/shellscript/logitlebash.sh && wafbring'
+cd ~/shellscript
+bash scripts/main/install_main.sh
 ```
 
-Waffle 카메라 매니저:
+이 명령은 메인 통신 패키지 설치용이다. FMS 전체 설치는 [Logistics_AI](https://github.com/E1I6-Logistics/Logistics_AI/tree/dev)의 `bash scripts/setup.sh main` 절차를 따른다. 이 저장소만 clone한 폴더에서 `scripts/setup.sh`를 FMS 전체 설치기로 실행하지 않는다.
 
-```bash
-ssh -t waffle@192.168.0.105 'source ~/shellscript/logitlebash.sh && wafcamera'
-```
+## 7. 사용 방법
 
-Jetson Nav2:
+### AMR 실행
 
-```bash
-ssh -t ax_logistics@192.168.0.100 'source ~/shellscript/logitlebash.sh && wafnav2'
-```
+별도 터미널 두 개에서 `ros_local`, `sl`로 환경을 준비한 뒤 각각 `logibring`, `logizenoh`를 실행한다.
 
-Jetson 비전·팔레트 액션 서버:
+| 명령 | 역할 |
+|---|---|
+| `ros_local` / `ros_normal` | 현재 장비 프로필의 통신 모드 선택 |
+| `sl` / `st` | 작업공간 환경 읽기 |
+| `logibring` | AMR 통합 Bringup |
+| `loginav2` | Nav2 단독 실행 |
+| `logicam` | 카메라 실행 |
+| `logizenoh` | AMR Bridge 실행. 기본 Router IP는 현장 예시 `192.168.0.16` |
+| `robot_info` | 현재 로봇 환경 조회 |
 
-```bash
-ssh -t ax_logistics@192.168.0.100 'source ~/shellscript/logitlebash.sh && wafreplace'
-```
+메인 PC 주소가 다르면 AMR에서 직접 `ros2 launch zenoh_pkg zenoh.launch.py robot_id:=robot1 router_ip:=<FMS_PC_IP>`로 실행하거나 등록된 함수 인자를 확인한다.
 
-Jetson Zenoh Bridge (FMS Router를 먼저 실행, 주소가 다르면 변경):
+### WAF 실행
 
-```bash
-ssh -t ax_logistics@192.168.0.100 'source ~/shellscript/logitlebash.sh && logizenoh 192.168.0.16'
-```
-
-**Pi에서 `logizenoh`를 실행하면 시작하지 않고 Jetson에서 실행하라는 안내를 표시한다.**
-
-### 전원 ON 자동 시작과 종료·재실행
-
-먼저 수동 SSH 터미널에서 실행하던 bringup·카메라·Nav2·액션·Bridge를 Ctrl+C로 종료한다.
-같은 프로그램을 수동 실행과 서비스로 중복 시작하지 않는다.
-Pi에 예전 Zenoh Bridge가 실행 중이면 종료하고 이후에는 Jetson에서만 실행한다.
-
-두 장비에서 위 역할 등록을 마친 뒤 **각 장비에서 한 번씩** 실행한다:
-
-```bash
-source ~/.bashrc
-sudo loginctl enable-linger "$(id -un)"
-waf_service autostart
-waf_service status
-```
-
-로그아웃하거나 전원을 다시 넣어도 사용자 systemd가 실행한다.
-Pi는 bringup·카메라 매니저 2개, Jetson은 Nav2·팔레트 액션 서버·Zenoh 3개를 시작한다.
-카메라 매니저는 기존 요청 방식으로 동작하고, 액션 서버는 goal을 기다린다.
-자동 시작 시 `wafgoal`을 보내지는 않는다. FMS Router가 늦게 켜져도 Bridge는 연결을 시도한다.
-오류 종료는 5초 뒤 재시작하며, 종료 시 프로세스 그룹에 SIGINT를 보내 정리한다.
-
-```bash
-waf_service stop           # 현재 장비의 WAF 서비스 전체 종료
-waf_service start          # 다시 실행
-waf_service restart        # 종료 후 다시 실행
-waf_service status         # 역할에 해당하는 서비스 상태
-waf_service logs --follow  # 실시간 로그 (Ctrl+C는 로그 보기만 종료)
-waf_service disable       # 다음 부팅 자동 시작 해제
-waf_service enable        # 다음 부팅 자동 시작 등록
-```
-
-`stop`은 다음 부팅 자동 시작 설정을 유지한다. 계속 꺼두려면 `stop`과 `disable`을 둘 다 실행한다.
-FMS IP나 작업 공간 변수를 바꾸면 `waf_service install` 후 `waf_service restart`로 적용한다.
-서비스는 `~/.config/systemd/user/logitle-waf-*.service`에 등록되며 기존 OMX·AMR 서비스는 관리하지 않는다.
-
-### 기본 경로와 단축 명령
+단축 명령은 장비별로 분리되어 있다. 각 프로그램은 별도 터미널 또는 서비스로 실행한다.
 
 | 장비 | 명령 | 실행 대상 |
 |---|---|---|
-| Pi | `wafbring` | `~/Logistics_WAF_RASPI/install/setup.bash` → `waffle waffle_bringup.launch.py` |
-| Pi | `wafcamera` | `~/camera_ws/install/setup.bash` → `~/camera_ws/scripts/waffle_camera_manager.py` |
-| Jetson | `wafnav2` | `~/Logistics_WAF`의 지도·keepout·`config/waffle_real_nav.yaml`로 Nav2 실행 |
-| Jetson | `wafreplace` | `~/venv/yolov3/bin/python ~/Logistics_WAF/src/pallet_replace_server.py` |
-| Jetson | `logizenoh [FMS_IP]` | DDS Domain 11·SUBNET ↔ Zenoh `/robot4` |
-| 공통 | `wafnetwork` | Domain 11·CycloneDDS·SUBNET 재적용, localhost 제한 해제 |
-| 공통 | `robot_info` | 적용된 ID·역할·Domain·RMW 확인 |
+| Pi | `wafbring` | Waffle 구동부 |
+| Pi | `wafcamera` | 카메라 관리자 |
+| Jetson | `wafnav2` | Nav2·지도·keepout |
+| Jetson | `wafreplace` | 비전·팔레트 액션 서버 |
+| Jetson | `logizenoh <FMS_PC_IP>` | Domain 11 ↔ robot4 Zenoh |
+| 공통 | `wafnetwork`, `wafsource` | WAF 통신 환경·작업공간 재적용 |
+| 공통 | `wafgoal 1` | 실제 팔레트 교체 요청 |
 
-`WAF_WS`, `WAF_CAMERA_WS`, `WAF_PYTHON`, `WAF_MAP`, `WAF_MASK`, `WAF_NAV_PARAMS`로
-기본 경로를 바꿀 수 있다. 기존 셸에 예전 `WAF_WS=~/turtlebot3_ws`가 남아 있다면
-새 SSH 터미널을 열거나 `unset WAF_WS` 후 환경을 다시 읽는다.
-기존 실행 노드는 환경변수를 바꿔도 옮겨지지 않으므로 작업을 종료하고 이 환경에서 다시 시작한다.
-조회가 오래된 daemon 환경을 사용하면 해당 장비에서 `ros2 daemon stop` 후 다시 조회한다.
-
-### 직접 액션 시험
-
-Jetson에서 서버가 보이는지 확인:
+SSH의 비대화형 셸에서는 환경 파일을 직접 읽을 수 있다. 다음은 실행 예시이며 서비스가 이미 켜져 있으면 중복 실행하지 않는다.
 
 ```bash
-ros2 action list -t
-ros2 topic list
+ssh -t ax_logistics@192.168.0.100 \
+  'source ~/shellscript/logitlebash.sh && wafreplace'
 ```
 
-Jetson에 접속해 **실제 팔레트 교체**를 요청:
+### WAF 부팅 자동 시작
+
+역할 등록과 기존 수동 실행 종료를 마친 뒤 Pi·Jetson에서 각각 한 번 등록한다.
 
 ```bash
-ssh -t ax_logistics@192.168.0.100 'source ~/shellscript/logitlebash.sh && wafgoal 1'
+sudo loginctl enable-linger "$(id -un)"
+waf_service autostart
 ```
 
-`wafgoal 1`은 기존 `/pallet_replace` 액션에 `{destination: 1}`을 보내고 피드백을 표시한다.
-다른 PC에서 직접 액션을 보내려면 그 PC에도 동일한 `waffle_interfaces`를 빌드·source하고
-Domain 11·CycloneDDS·SUBNET을 적용한다.
+| 관리 목적 | 선택할 명령 |
+|---|---|
+| 상태 조회 | `waf_service status` |
+| 로그 보기 | `waf_service logs --follow` |
+| 현재 실행 정지 | `waf_service stop` |
+| 다시 시작 | `waf_service start` |
+| 정지 후 재실행 | `waf_service restart` |
+| 다음 부팅 자동 시작 해제·등록 | `waf_service disable` / `waf_service enable` |
+| 변경한 경로·환경을 서비스에 저장 | `waf_service install` 후 필요한 시점에 재시작 |
 
-### Bridge 설정 범위
+표의 관리 명령은 필요한 것 하나씩 사용한다. `stop → start → restart`를 한꺼번에 실행하는 설치 순서가 아니다. 로그 보기에서 Ctrl+C는 로그 조회만 종료한다.
 
-기존 `scripts/waffle/bridge.json5`를 그대로 사용한다. 외부 FMS에는
-`/robot4/battery_state`, `/robot4/amcl_pose`, `/robot4/logitle_pose`,
-`/robot4/pallet_replace`만 연결한다. Waffle·Jetson 내부의 `/scan`, `/tf`, 카메라,
-Nav2·속도 제어 이름에는 `/robot4`를 붙이지 않는다.
+## 8. 설정과 운영 시 참고
 
-개발 검증: `python3 -m unittest discover -s tests -v`.
-실제 장비·APT·ROS 실행 없이 셸 환경, 역할 분리, 기존 AMR1~3 동작을 검증한다.
+- **서비스 범위:** Pi는 Bringup·카메라 관리자, Jetson은 Nav2·팔레트 서버·Zenoh를 관리한다. 부팅 시 보충 goal을 자동 전송하지 않는다.
+- **경로 재정의:** `WAF_WS`, `WAF_CAMERA_WS`, `WAF_PYTHON`, `WAF_MAP`, `WAF_MASK`, `WAF_NAV_PARAMS`, `ZENOH_ROUTER_IP`를 사용한다. 변경 후 서비스에 다시 저장해야 한다.
+- **Bridge 범위:** WAF는 배터리·AMCL·logitle_pose와 `/pallet_replace`만 중계한다. 내부 `/scan`·`/tf`·카메라·속도 제어는 Domain 11 DDS로 연결한다.
+- **실행 상태:** systemd의 `active` 직후에는 ROS 환경을 읽는 중일 수 있다. Nav2 활성화·카메라 관리자·액션 서버 준비까지 로그로 확인한다.
+- **프로세스 정리:** `roskill`은 해당 호스트의 넓은 ROS/Zenoh 프로세스 범위를 종료하는 도구다. WAF 서비스 관리에는 먼저 `waf_service stop`을 사용한다.
+- **네트워크 설정:** Wi-Fi·고정 IP 변경 도구는 실제 연결을 바꾼다. 기존 현장 설정을 확인하고 필요할 때만 사용한다. 자격 정보는 README에 기록하지 않는다.
+
+## 9. 확인 및 점검
+
+```bash
+robot_info
+printf 'Domain=%s RMW=%s Discovery=%s\n' \
+  "$ROS_DOMAIN_ID" "$RMW_IMPLEMENTATION" "$ROS_AUTOMATIC_DISCOVERY_RANGE"
+```
+
+WAF 서비스 상태·로그는 해당 장비의 `waf_service status`, `waf_service logs --follow`로 확인한다. 사용자 journal이 보이지 않으면 관리자 journal에서 해당 사용자·unit의 로그를 조회한다.
+
+| 증상 | 확인 위치 |
+|---|---|
+| WAF가 Domain 0으로 설정됨 | 등록 역할, 오래된 셸 source, WAF 프로필 적용 순서 |
+| Jetson을 알 수 없는 호스트로 표시 | `--role jetson` 등록, 계정명, 이전 `.bashrc` 설정 |
+| Pi에서 Zenoh 실행 거절 | Jetson에서 `logizenoh`를 실행하는 역할 분리가 적용된 상태 |
+| 작업공간·Python을 찾지 못함 | `WAF_*` 경로, 기존 빌드·가상환경 존재 여부 |
+| 재시작 때 KeyboardInterrupt | 요청한 stop/restart 시각과 프로세스 종료 로그 |
+
+개발 검증은 `python3 -m unittest discover -s tests -v`를 사용한다. 가상 검증은 실제 장비 실행·APT 설치·물리 동작 시험과 구분한다. 이번 정리에서는 설치기나 서비스를 실행하지 않는다.
+
+## 10. 관련 문서와 저장소
+
+- [상세 운영·SSH·서비스 참고](docs/README_REFERENCE.md)
+- [FMS: Logistics_AI](https://github.com/E1I6-Logistics/Logistics_AI/tree/dev)
+- [AMR: Logistics_AMR](https://github.com/E1I6-Logistics/Logistics_AMR/tree/dev)
+- [WAF Jetson: Logistics_WAF](https://github.com/E1I6-Logistics/Logistics_WAF/tree/dev)
+- [Waffle Pi: Logistics_WAF_RASPI](https://github.com/E1I6-Logistics/Logistics_WAF_RASPI)
+- [로봇팔: Logistics_OMX](https://github.com/E1I6-Logistics/Logistics_OMX/tree/dev)
+
+## 11. 브랜치와 문서 기준
+
+2026-11-07 정리 기준은 최근 사용한 원격 `dev`의 `020ed11`이다. WAF Domain 11·Pi/Jetson 분리와 자동 시작을 포함한 실행 코드를 유지하고 README를 통일한다. **`main` 반영은 최종 검토·이미지 추가 후 별도로 진행한다.**
+
+이번 정리에서 셸 함수·설치기·서비스 구현·Bridge 설정·네트워크 스크립트는 수정하지 않는다. 기존 상세 운영 문서는 참고본으로 보존한다.
